@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>voidnull.ai</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#050510;overflow:hidden;height:100vh;width:100vw;font-family:'Press Start 2P',monospace;cursor:none}
+  canvas#main{position:fixed;top:0;left:0;z-index:1}
+  .scanlines{position:fixed;top:0;left:0;width:100%;height:100%;z-index:90;pointer-events:none;
+    background:repeating-linear-gradient(transparent 0px,transparent 3px,rgba(0,0,0,0.04) 3px,rgba(0,0,0,0.04) 4px)}
+  .vignette{position:fixed;top:0;left:0;width:100%;height:100%;z-index:89;pointer-events:none;
+    background:radial-gradient(ellipse at center,transparent 30%,rgba(2,2,8,0.75) 100%)}
+  .bottom-bar{position:fixed;bottom:0;left:0;right:0;z-index:91;display:flex;flex-direction:column;align-items:center;padding-bottom:22px;gap:10px}
+  .site-title{color:rgba(200,200,220,0.7);font-size:clamp(8px,1.6vw,13px);letter-spacing:8px;text-shadow:0 0 20px rgba(180,180,255,0.08)}
+  .github-link{display:inline-flex;align-items:center;gap:8px;color:rgba(150,150,170,0.6);font-size:7px;letter-spacing:3px;text-decoration:none;
+    padding:7px 16px;border:1px solid rgba(255,255,255,0.05);background:rgba(255,255,255,0.01);transition:all .6s;cursor:none}
+  .github-link:hover{color:rgba(255,255,255,0.9);border-color:rgba(255,255,255,0.2);background:rgba(255,255,255,0.03);
+    text-shadow:0 0 12px rgba(255,255,255,0.2);box-shadow:0 0 30px rgba(255,255,255,0.03)}
+  .github-link svg{width:13px;height:13px;fill:currentColor}
+</style>
+</head>
+<body>
+<canvas id="main"></canvas>
+<div class="scanlines"></div>
+<div class="vignette"></div>
+<div class="bottom-bar">
+  <div class="site-title">VOIDNULL.AI</div>
+  <a class="github-link" href="https://github.com/mimisa00" target="_blank" rel="noopener">
+    <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+    GITHUB
+  </a>
+</div>
+<script>
+const C=document.getElementById('main'),X=C.getContext('2d');
+let W,H,cx,cy,nebCvs;
+function resize(){W=C.width=innerWidth;H=C.height=innerHeight;cx=W/2;cy=H/2;}
+resize();
+
+/* ════════════════════════════════════════
+   PROCEDURAL PIXEL SPHERE GENERATOR
+   Creates proper circular planets with
+   animated light terminator for rotation
+   ════════════════════════════════════════ */
+function makeSphereMask(r) {
+  const d=r*2+1, mask=[];
+  for(let y=0;y<d;y++){mask[y]=[];for(let x=0;x<d;x++){
+    const dx=x-r,dy=y-r;
+    mask[y][x]=Math.sqrt(dx*dx+dy*dy)<=r+0.3;
+  }}
+  return mask;
+}
+
+function drawSphere(x,y,r,baseH,baseS,baseLArr,features,lightAngle,pxSz){
+  const d=r*2+1;
+  const mask=makeSphereMask(r);
+  for(let py=0;py<d;py++){for(let px=0;px<d;px++){
+    if(!mask[py][px])continue;
+    const dx=(px-r)/r, dy=(py-r)/r;
+    const dist=Math.sqrt(dx*dx+dy*dy);
+    if(dist>1)continue;
+    // sphere normal
+    const nz=Math.sqrt(Math.max(0,1-dx*dx-dy*dy));
+    const nx_=dx, ny_=dy;
+    // light direction (rotates for spin)
+    const lx=Math.cos(lightAngle)*0.7, ly=-0.3, lz=Math.sin(lightAngle)*0.7;
+    const ll=Math.sqrt(lx*lx+ly*ly+lz*lz);
+    let dot=(nx_*lx/ll + ny_*ly/ll + nz*lz/ll);
+    dot=Math.max(0,dot);
+    // atmosphere rim
+    const rim=Math.pow(1-nz,2.5)*0.3;
+    // surface features (procedural bands or patches)
+    let fH=baseH, fS=baseS, fL=baseLArr[0];
+    if(features==='bands'){
+      const band=Math.sin((dy+dx*0.15)*Math.PI*3 + lightAngle*0.5);
+      const bi=Math.floor((band+1)/2*(baseLArr.length-0.01));
+      fL=baseLArr[bi];
+      fS=baseS+(band>0.6?8:0);
+    } else if(features==='patches'){
+      const hash=Math.sin(px*127.1+py*311.7)*43758.5453;
+      const patch=(hash-Math.floor(hash));
+      if(patch>0.7){fH+=10;fL+=3;}
+    } else if(features==='earthlike'){
+      const hash=Math.sin(px*97.3+py*251.1+lightAngle*0.3)*43758.5453;
+      const v=hash-Math.floor(hash);
+      if(v>0.55){fH=140;fS=50;fL+=8;} // land
+    } else if(features==='storm'){
+      const band=Math.sin(dy*Math.PI*4 + lightAngle*0.3);
+      const bi=Math.floor((band+1)/2*(baseLArr.length-0.01));
+      fL=baseLArr[bi];
+      // great red spot
+      const sx=dx-0.2, sy=dy+0.15;
+      if(sx*sx*3+sy*sy*6<0.04){fH=10;fS=70;fL=40;}
+    } else if(features==='ice'){
+      const hash=Math.sin(px*73.1+py*197.7)*43758.5453;
+      const v=hash-Math.floor(hash);
+      if(v>0.6){fL+=5;fS-=10;}
+    }
+    const brightness=dot*0.7+0.3;
+    const finalL=Math.min(90, fL * brightness + rim*30);
+    X.fillStyle=`hsl(${fH},${Math.max(0,fS)}%,${Math.max(5,finalL)}%)`;
+    X.fillRect(Math.round(x-r*pxSz+px*pxSz), Math.round(y-r*pxSz+py*pxSz), Math.ceil(pxSz), Math.ceil(pxSz));
+  }}
+}
+
+/* ════════════════════════════════════════
+   STAR FIELD
+   ════════════════════════════════════════ */
+let stars=[];
+function initStars(){
+  stars=[];
+  for(let i=0;i<400;i++){
+    stars.push({x:Math.random(),y:Math.random(),
+      s:Math.random()<0.06?2:1,
+      base:Math.random()*0.35+0.1,
+      phase:Math.random()*Math.PI*2,
+      speed:Math.random()*0.001+0.0003,
+      hue:[0,30,45,210,230,280][Math.floor(Math.random()*6)],
+      sat:Math.random()<0.3?0:25+Math.random()*20,
+    });
+  }
+}
+initStars();
+
+function drawStars(t){
+  for(const s of stars){
+    const a=s.base+Math.sin(t*s.speed+s.phase)*0.18;
+    if(a<0.03)continue;
+    X.globalAlpha=a;
+    const b=65+Math.floor(a*50);
+    X.fillStyle=`hsl(${s.hue},${s.sat}%,${b}%)`;
+    X.fillRect(Math.round(s.x*W),Math.round(s.y*H),s.s,s.s);
+  }
+  X.globalAlpha=1;
+}
+
+/* ════════════════════════════════════════
+   NEBULA (subtle colored fog)
+   ════════════════════════════════════════ */
+function genNebula(){
+  nebCvs=document.createElement('canvas');
+  nebCvs.width=W;nebCvs.height=H;
+  const n=nebCvs.getContext('2d');
+  const clouds=[
+    {x:W*0.15,y:H*0.25,r:W*0.22,h:265,s:35,l:8,a:0.035},
+    {x:W*0.8,y:H*0.65,r:W*0.18,h:330,s:30,l:7,a:0.025},
+    {x:W*0.55,y:H*0.1,r:W*0.25,h:210,s:25,l:6,a:0.02},
+    {x:W*0.35,y:H*0.8,r:W*0.15,h:180,s:20,l:5,a:0.015},
+  ];
+  for(const c of clouds){
+    const g=n.createRadialGradient(c.x,c.y,0,c.x,c.y,c.r);
+    g.addColorStop(0,`hsla(${c.h},${c.s}%,${c.l}%,${c.a})`);
+    g.addColorStop(0.6,`hsla(${c.h},${c.s}%,${c.l}%,${c.a*0.4})`);
+    g.addColorStop(1,'transparent');
+    n.fillStyle=g;n.fillRect(0,0,W,H);
+  }
+}
+
+/* ════════════════════════════════════════
+   SOLAR SYSTEM CONFIGURATION
+   ════════════════════════════════════════ */
+function sysR(){return Math.min(W,H)*0.43;}
+
+// Planets: dist is fraction of sysR, period controls orbit speed
+// spinRate controls rotation of light terminator
+const P=[
+  {name:'Mercury',radius:4, h:35, s:10,lArr:[35,40,30],feat:'patches',
+   dist:0.10,period:70, spinRate:0.0004, moons:[]},
+  {name:'Venus',  radius:5, h:40, s:35,lArr:[55,50,58],feat:'patches',
+   dist:0.16,period:120,spinRate:0.00015,moons:[]},
+  {name:'Earth',  radius:6, h:215,s:55,lArr:[40,45,42],feat:'earthlike',
+   dist:0.23,period:180,spinRate:0.0006, moons:[
+    {name:'Moon',radius:2,h:45,s:5,lArr:[65,60],feat:'patches',dist:20,period:22,spinRate:0.0003}
+  ]},
+  {name:'Mars',   radius:4, h:10, s:60,lArr:[35,38,30],feat:'patches',
+   dist:0.30,period:260,spinRate:0.0005, moons:[
+    {name:'Phobos',radius:1,h:20,s:15,lArr:[30],feat:'',dist:13,period:8,spinRate:0.0005},
+    {name:'Deimos',radius:1,h:25,s:10,lArr:[32],feat:'',dist:18,period:14,spinRate:0.0004},
+  ]},
+  {name:'Jupiter',radius:9, h:35, s:40,lArr:[45,55,40,50,42,52],feat:'storm',
+   dist:0.42,period:500,spinRate:0.001, moons:[
+    {name:'Io',      radius:2,h:50,s:70,lArr:[55],feat:'',dist:18,period:8, spinRate:0.0004},
+    {name:'Europa',  radius:2,h:200,s:20,lArr:[60],feat:'ice',dist:24,period:14,spinRate:0.0003},
+    {name:'Ganymede',radius:2,h:30,s:15,lArr:[42],feat:'patches',dist:31,period:22,spinRate:0.0003},
+    {name:'Callisto',radius:2,h:25,s:10,lArr:[35],feat:'patches',dist:38,period:32,spinRate:0.0002},
+  ]},
+  {name:'Saturn', radius:8, h:42, s:30,lArr:[50,55,48,53],feat:'bands',
+   dist:0.56,period:750,spinRate:0.0008, hasRing:true, moons:[
+    {name:'Titan',radius:2,h:38,s:40,lArr:[45],feat:'',dist:28,period:18,spinRate:0.0003},
+    {name:'Enceladus',radius:1,h:200,s:10,lArr:[70],feat:'ice',dist:20,period:10,spinRate:0.0003},
+  ]},
+  {name:'Uranus', radius:6, h:185,s:35,lArr:[48,52,46],feat:'ice',
+   dist:0.68,period:1100,spinRate:0.0003,moons:[
+    {name:'Miranda',radius:1,h:200,s:10,lArr:[45],feat:'',dist:18,period:12,spinRate:0.0003},
+  ]},
+  {name:'Neptune',radius:6, h:225,s:50,lArr:[35,40,32,38],feat:'bands',
+   dist:0.80,period:1500,spinRate:0.0004,moons:[
+    {name:'Triton',radius:2,h:195,s:20,lArr:[50],feat:'ice',dist:20,period:14,spinRate:0.0003},
+  ]},
+  {name:'Pluto',  radius:3, h:30, s:12,lArr:[38,35],feat:'patches',
+   dist:0.92,period:2200,spinRate:0.0002,moons:[
+    {name:'Charon',radius:1,h:25,s:8,lArr:[35],feat:'',dist:12,period:10,spinRate:0.0002},
+  ]},
+];
+
+// random initial orbital positions
+for(const p of P){
+  p.offset=Math.random()*Math.PI*2;
+  for(const m of p.moons) m.offset=Math.random()*Math.PI*2;
+}
+
+/* ════════════════════════════════════════
+   ASTEROID BELT
+   ════════════════════════════════════════ */
+const asteroids=[];
+for(let i=0;i<120;i++){
+  asteroids.push({
+    angle:Math.random()*Math.PI*2,
+    dist:0.35+Math.random()*0.055,
+    speed:0.000012+Math.random()*0.000018,
+    size:Math.random()<0.12?2:1,
+    bright:50+Math.floor(Math.random()*40),
+    yOff:(Math.random()-0.5)*6,
+  });
+}
+
+/* ════════════════════════════════════════
+   KUIPER BELT
+   ════════════════════════════════════════ */
+const kuiper=[];
+for(let i=0;i<60;i++){
+  kuiper.push({
+    angle:Math.random()*Math.PI*2,
+    dist:0.94+Math.random()*0.07,
+    speed:0.000004+Math.random()*0.000006,
+    bright:30+Math.floor(Math.random()*25),
+  });
+}
+
+/* ════════════════════════════════════════
+   COMETS & METEORS
+   ════════════════════════════════════════ */
+const comets=[];
+let lastComet=0;
+function spawnComet(){
+  const isMeteor=Math.random()<0.6;
+  const edge=Math.floor(Math.random()*4);
+  let sx,sy,angle;
+  switch(edge){
+    case 0:sx=Math.random()*W;sy=-40;angle=Math.PI/2+(Math.random()-0.5)*0.8;break;
+    case 1:sx=W+40;sy=Math.random()*H;angle=Math.PI+(Math.random()-0.5)*0.8;break;
+    case 2:sx=Math.random()*W;sy=H+40;angle=-Math.PI/2+(Math.random()-0.5)*0.8;break;
+    default:sx=-40;sy=Math.random()*H;angle=(Math.random()-0.5)*0.8;break;
+  }
+  const spd=isMeteor?(1.8+Math.random()*1.5):(0.35+Math.random()*0.35);
+  comets.push({
+    x:sx,y:sy,
+    vx:Math.cos(angle)*spd, vy:Math.sin(angle)*spd,
+    life:0, maxLife:isMeteor?180:600,
+    isMeteor, tailLen:isMeteor?30:55,
+    trail:[], hue:isMeteor?(25+Math.random()*25):(170+Math.random()*50),
+    size:isMeteor?2:3,
+  });
+}
+
+/* ════════════════════════════════════════
+   MOUSE COMET TRAIL
+   ════════════════════════════════════════ */
+let mx=-200,my=-200;
+const mTrail=[];
+const MTRAIL=35;
+addEventListener('mousemove',e=>{
+  mx=e.clientX;my=e.clientY;
+  mTrail.push({x:mx,y:my,t:performance.now()});
+  if(mTrail.length>MTRAIL)mTrail.shift();
+});
+addEventListener('mouseleave',()=>{mx=-200;my=-200;mTrail.length=0;});
+
+function drawCursor(now){
+  if(mTrail.length<2)return;
+  // ember particles
+  for(let i=0;i<mTrail.length;i++){
+    const ratio=i/mTrail.length;
+    const age=(now-mTrail[i].t)/1000;
+    const fade=Math.max(0,1-age*2);
+    const alpha=ratio*0.55*fade;
+    if(alpha<=0)continue;
+    const sz=Math.max(1,Math.round(ratio*3));
+    // warm glow
+    X.globalAlpha=alpha*0.2;
+    X.fillStyle='#fc8';
+    X.fillRect(Math.round(mTrail[i].x)-sz-1,Math.round(mTrail[i].y)-sz-1,sz*2+3,sz*2+3);
+    // core trail
+    X.globalAlpha=alpha*0.8;
+    X.fillStyle='#ffe8cc';
+    const cs=Math.max(1,Math.ceil(sz*0.6));
+    X.fillRect(Math.round(mTrail[i].x),Math.round(mTrail[i].y),cs,cs);
+  }
+  // sparkle particles
+  if(Math.random()<0.5&&mTrail.length>4){
+    const idx=mTrail.length-3-Math.floor(Math.random()*3);
+    if(idx>=0){
+      X.globalAlpha=0.25+Math.random()*0.2;
+      X.fillStyle=['#fa8','#fda','#ff8','#adf'][Math.floor(Math.random()*4)];
+      X.fillRect(
+        Math.round(mTrail[idx].x+(Math.random()-0.5)*12),
+        Math.round(mTrail[idx].y+(Math.random()-0.5)*12),1,1);
+    }
+  }
+  // cursor head
+  X.globalAlpha=0.12;X.fillStyle='#fc8';
+  X.fillRect(Math.round(mx)-4,Math.round(my)-4,9,9);
+  X.globalAlpha=0.35;X.fillStyle='#fea';
+  X.fillRect(Math.round(mx)-2,Math.round(my)-2,5,5);
+  X.globalAlpha=1;X.fillStyle='#fff';
+  X.fillRect(Math.round(mx)-1,Math.round(my)-1,3,3);
+  X.globalAlpha=1;
+}
+
+/* ════════════════════════════════════════
+   SUN (procedural pixel sun with corona)
+   ════════════════════════════════════════ */
+function drawSun(t){
+  const sc=Math.max(0.5,sysR()/380);
+  const r=Math.round(10*sc);
+  const pulse=Math.sin(t*0.0005)*0.12+0.88;
+
+  // deep corona layers
+  for(let i=6;i>=1;i--){
+    const cr=r+i*8*sc;
+    X.globalAlpha=0.015*pulse*(7-i)/6;
+    X.fillStyle=i>3?'#f80':'#fa0';
+    X.beginPath();X.arc(cx,cy,cr,0,Math.PI*2);X.fill();
+  }
+
+  // sun rays
+  const rayN=12;
+  for(let i=0;i<rayN;i++){
+    const a=(i/rayN)*Math.PI*2+t*0.00006;
+    const len=(30+Math.sin(t*0.001+i*2.1)*12)*sc;
+    X.globalAlpha=0.03*pulse;
+    X.strokeStyle='#fd6';X.lineWidth=1;
+    X.beginPath();
+    X.moveTo(cx+Math.cos(a)*(r+4)*1,cy+Math.sin(a)*(r+4)*1);
+    X.lineTo(cx+Math.cos(a)*len,cy+Math.sin(a)*len);
+    X.stroke();
+  }
+
+  // sun body - pixel sphere with animated surface
+  const d=r*2+1;
+  const mask=makeSphereMask(r);
+  for(let py=0;py<d;py++){for(let px=0;px<d;px++){
+    if(!mask[py][px])continue;
+    const dx_=(px-r)/r,dy_=(py-r)/r;
+    const dist=Math.sqrt(dx_*dx_+dy_*dy_);
+    if(dist>1)continue;
+    const nz=Math.sqrt(Math.max(0,1-dist*dist));
+    // surface granulation
+    const grain=Math.sin(px*7.7+py*13.3+t*0.001)*0.15;
+    const bright=60+nz*40+grain*10;
+    const hue=42+grain*15-dist*8;
+    const sat=85+grain*10;
+    X.globalAlpha=1;
+    X.fillStyle=`hsl(${hue},${sat}%,${Math.min(98,bright*pulse)}%)`;
+    X.fillRect(Math.round(cx-r+px),Math.round(cy-r+py),1,1);
+  }}
+
+  // bright inner glow
+  X.globalAlpha=0.08*pulse;
+  X.fillStyle='#fff';
+  X.beginPath();X.arc(cx,cy,r*0.5,0,Math.PI*2);X.fill();
+  X.globalAlpha=1;
+}
+
+/* ════════════════════════════════════════
+   ORBIT RINGS
+   ════════════════════════════════════════ */
+function drawOrbit(r,highlight){
+  const steps=Math.max(100,Math.floor(r*1.1));
+  const base=highlight?0.09:0.03;
+  for(let i=0;i<steps;i+=2){
+    const a=(i/steps)*Math.PI*2;
+    const fade=0.7+Math.sin(a*4)*0.3;
+    X.globalAlpha=base*fade;
+    X.fillStyle=highlight?'#8af':'#fff';
+    X.fillRect(Math.round(cx+Math.cos(a)*r),Math.round(cy+Math.sin(a)*r),1,1);
+  }
+  X.globalAlpha=1;
+}
+
+/* ════════════════════════════════════════
+   SATURN RING
+   ════════════════════════════════════════ */
+function drawSaturnRing(px_,py_,sc,half){
+  const rw=32*sc,rh=9*sc;
+  const startA=half==='back'?Math.PI:0;
+  const endA=half==='back'?Math.PI*2:Math.PI;
+  for(let a=startA;a<endA;a+=0.025){
+    const rx=Math.cos(a)*rw,ry=Math.sin(a)*rh;
+    const ringDist=Math.abs(Math.cos(a));
+    const gap=Math.sin(a*8);
+    if(gap>0.85)continue; // cassini-ish gap
+    const b=130+Math.floor(ringDist*50);
+    X.globalAlpha=0.35+ringDist*0.15;
+    X.fillStyle=`rgb(${b},${b-10},${b-35})`;
+    X.fillRect(Math.round(px_+rx),Math.round(py_+ry),1,1);
+  }
+  X.globalAlpha=1;
+}
+
+/* ════════════════════════════════════════
+   HOVER DETECTION
+   ════════════════════════════════════════ */
+let hovered=null;
+const ppos=[];
+addEventListener('mousemove',e=>{
+  hovered=null;
+  for(const pp of ppos){
+    const dx=e.clientX-pp.x,dy=e.clientY-pp.y;
+    if(dx*dx+dy*dy<pp.hr*pp.hr){hovered=pp.name;break;}
+  }
+});
+
+/* ════════════════════════════════════════
+   MAIN RENDER
+   ════════════════════════════════════════ */
+genNebula();
+addEventListener('resize',()=>{resize();genNebula();initStars();});
+
+const ORB_SPD=0.000018; // very slow meditative orbits
+
+function render(t){
+  X.clearRect(0,0,W,H);
+  const R_=sysR();
+  const sc=Math.max(0.5,R_/380);
+
+  // nebula bg
+  if(nebCvs)X.drawImage(nebCvs,0,0);
+
+  // stars
+  drawStars(t);
+
+  // orbits
+  for(const p of P) drawOrbit(p.dist*R_, hovered===p.name);
+
+  // asteroid belt
+  for(const a of asteroids){
+    a.angle+=a.speed;
+    const r_=a.dist*R_;
+    const ax=cx+Math.cos(a.angle)*r_;
+    const ay=cy+Math.sin(a.angle)*r_+a.yOff;
+    X.globalAlpha=0.2;
+    X.fillStyle=`rgb(${a.bright},${a.bright-5},${a.bright-15})`;
+    X.fillRect(Math.round(ax),Math.round(ay),a.size,a.size);
+  }
+
+  // kuiper belt
+  for(const k of kuiper){
+    k.angle+=k.speed;
+    const r_=k.dist*R_;
+    X.globalAlpha=0.08;
+    X.fillStyle=`rgb(${k.bright},${k.bright},${k.bright+8})`;
+    X.fillRect(Math.round(cx+Math.cos(k.angle)*r_),Math.round(cy+Math.sin(k.angle)*r_),1,1);
+  }
+  X.globalAlpha=1;
+
+  // sun
+  drawSun(t);
+
+  // planets
+  ppos.length=0;
+  for(const p of P){
+    const angle=p.offset + t*ORB_SPD*(1000/p.period);
+    const r_=p.dist*R_;
+    const px_=cx+Math.cos(angle)*r_;
+    const py_=cy+Math.sin(angle)*r_;
+    const lightA=t*p.spinRate; // terminator rotation for self-spin
+    const pxSz=Math.max(1,Math.round(sc));
+
+    // saturn ring back
+    if(p.hasRing) drawSaturnRing(px_,py_,sc,'back');
+
+    // planet sphere
+    drawSphere(px_,py_,Math.round(p.radius*sc),p.h,p.s,p.lArr,p.feat,lightA,pxSz);
+
+    // saturn ring front
+    if(p.hasRing) drawSaturnRing(px_,py_,sc,'front');
+
+    // hit area
+    const hitR=Math.max(16,p.radius*sc*2.5);
+    ppos.push({name:p.name,x:px_,y:py_,hr:hitR});
+
+    // hover label
+    if(hovered===p.name){
+      X.globalAlpha=0.85;
+      X.fillStyle='#dde';
+      X.font=`${Math.max(6,Math.round(7*sc))}px "Press Start 2P",monospace`;
+      X.textAlign='center';
+      X.fillText(p.name.toUpperCase(),Math.round(px_),Math.round(py_-hitR-4));
+      X.globalAlpha=1;
+    }
+
+    // moons
+    for(const m of p.moons){
+      const ma=m.offset + t*ORB_SPD*(1000/m.period)*2.5;
+      const md=m.dist*sc;
+      const mmx=px_+Math.cos(ma)*md;
+      const mmy=py_+Math.sin(ma)*md;
+      const mLightA=t*m.spinRate;
+      drawSphere(mmx,mmy,Math.round(Math.max(1,m.radius*sc)),m.h,m.s,m.lArr,m.feat,mLightA,Math.max(1,pxSz));
+    }
+  }
+
+  // ── COMETS / METEORS ──
+  if(t-lastComet>4500+Math.random()*6000){spawnComet();lastComet=t;}
+
+  for(let i=comets.length-1;i>=0;i--){
+    const c=comets[i];
+    c.x+=c.vx;c.y+=c.vy;
+    c.life++;
+    c.trail.push({x:c.x,y:c.y});
+    if(c.trail.length>c.tailLen)c.trail.shift();
+    if(c.life>c.maxLife||c.x<-100||c.x>W+100||c.y<-100||c.y>H+100){comets.splice(i,1);continue;}
+
+    for(let j=0;j<c.trail.length;j++){
+      const ratio=j/c.trail.length;
+      X.globalAlpha=ratio*0.5;
+      const s=Math.max(1,Math.round(ratio*c.size));
+      const b=55+Math.floor(ratio*35);
+      X.fillStyle=`hsl(${c.hue},${c.isMeteor?75:45}%,${b}%)`;
+      X.fillRect(Math.round(c.trail[j].x),Math.round(c.trail[j].y),s,s);
+    }
+    X.globalAlpha=1;X.fillStyle='#fff';
+    X.fillRect(Math.round(c.x)-1,Math.round(c.y)-1,c.size,c.size);
+    if(!c.isMeteor){
+      X.globalAlpha=0.12;X.fillStyle=`hsl(${c.hue},50%,60%)`;
+      X.fillRect(Math.round(c.x)-3,Math.round(c.y)-3,c.size+4,c.size+4);
+    }
+    X.globalAlpha=1;
+  }
+
+  // cursor
+  drawCursor(performance.now());
+
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+</script>
+</body>
+</html>
